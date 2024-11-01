@@ -10,6 +10,119 @@ from cryptography.hazmat.backends import default_backend
 import base64
 import requests
 
+import os
+import ecdsa
+import hashlib
+import base58
+from rest_framework.views import APIView
+
+
+
+class PeerToPeerTransferView(APIView):
+    def post(self, request):
+        sender_public_key = request.data.get('public_key')
+        sender_address = request.data.get('bitcoin_address')
+        recipient_address = request.data.get('recipient_address')
+        amount = request.data.get('amount')
+
+        if not all([sender_public_key, sender_address, recipient_address, amount]):
+            return Response({'error': 'Missing required fields'}, status=400)
+
+        payload = {
+            'sender_public_key': sender_public_key,
+            'sender_address': sender_address,
+            'recipient_address': recipient_address,
+            'amount': amount
+        }
+        # Simulate the transfer request to a mock blockchain
+        response = requests.post("https://mock-blockchain.com/send-transaction", json=payload)
+        
+        if response.status_code == 200:
+            return Response(response.json(), status=200)
+        return Response({'error': 'Transaction failed'}, status=500)
+
+class CheckBalanceView(APIView):
+    def get(self, request):
+        private_key = request.query_params.get('private_key')
+        bitcoin_address = request.query_params.get('bitcoin_address')
+
+        if not private_key or not bitcoin_address:
+            return Response({'error': 'private_key and bitcoin_address are required'}, status=400)
+
+        # Fetch balance from a public API (modify with a reliable API endpoint)
+        response = requests.get(f"https://blockstream.info/testnet/api/address/{bitcoin_address}")
+        if response.status_code == 200:
+            data = response.json()
+            balance = data.get('chain_stats', {}).get('funded_txo_sum', 0) / 1e8
+            return Response({'balance': balance})
+        return Response({'error': 'Failed to fetch balance'}, status=500)
+
+
+
+
+
+
+
+
+def generate_private_key():
+    return os.urandom(32)
+
+def get_public_key(private_key):
+    sk = ecdsa.SigningKey.from_string(private_key, curve=ecdsa.SECP256k1)
+    vk = sk.get_verifying_key()
+    return b'\x04' + vk.to_string()
+
+def hash_public_key(public_key):
+    sha256_result = hashlib.sha256(public_key).digest()
+    ripemd160 = hashlib.new('ripemd160')
+    ripemd160.update(sha256_result)
+    return ripemd160.digest()
+
+def generate_bitcoin_address(public_key_hash):
+    # Prepend version byte (0x00 for mainnet)
+    network_byte = b'\x00'
+    payload = network_byte + public_key_hash
+
+    # Calculate checksum
+    checksum = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
+    address_bytes = payload + checksum
+
+    # Convert to Base58
+    return base58.b58encode(address_bytes).decode()
+
+# Generate private key
+private_key = generate_private_key()
+print("Private Key:", private_key.hex())
+
+# Derive public key
+public_key = get_public_key(private_key)
+print("Public Key:", public_key.hex())
+
+# Generate hashed public key
+public_key_hash = hash_public_key(public_key)
+
+# Generate Bitcoin address
+bitcoin_address = generate_bitcoin_address(public_key_hash)
+print("Bitcoin Address:", bitcoin_address)
+
+
+
+
+
+class BitcoinAddressGeneratorView(APIView):
+    def get(self, request):
+        """Generate and return a new Bitcoin address."""
+        private_key = generate_private_key()
+        public_key = get_public_key(private_key)
+        public_key_hash = hash_public_key(public_key)
+        bitcoin_address = generate_bitcoin_address(public_key_hash)
+
+        return Response({
+            'private_key': private_key.hex(),
+            'public_key': public_key.hex(),
+            'bitcoin_address': bitcoin_address
+        })
+
 class Wallet:
     def __init__(self):
         self.private_key = None
